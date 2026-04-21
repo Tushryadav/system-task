@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────
+#  docker-compose.yml — SRAAS API
+#  Development + Production profiles
+# ─────────────────────────────────────────────────────────────
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+    # ── Secrets come from .env file (never hardcoded here) ──
+    env_file:
+      - .env
+
+    # ── Override specific values per environment if needed ──
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

@@ -45,6 +45,14 @@ public record OrgResponse(
 
 public record UpdateSeatLimitRequest(int NewSeatLimit);
 
+public record RegisterOrgRequest(
+    string OrgName,
+    string OrgSlug,
+    string AdminName,
+    string AdminEmail,
+    string AdminPassword
+);
+
 // ═══════════════════════════════════════════════════
 //  MEMBER DTOs
 // ═══════════════════════════════════════════════════

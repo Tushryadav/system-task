@@ -6,7 +6,7 @@ public class OrgInvite
 {
     public Guid Id { get; set; }
     public Guid OrgId { get; set; }
-    public Guid CreatedBy { get; set; }
+    public Guid? CreatedBy { get; set; }
     public string InviteCode { get; set; } = null!;
     public InviteTypeEnum InviteType { get; set; } = InviteTypeEnum.Multi;
     public int MaxUses { get; set; } = 1;
@@ -17,6 +17,6 @@ public class OrgInvite
 
     // Navigation properties
     public Organization Organization { get; set; } = null!;
-    public OrgMember Creator { get; set; } = null!;
+    public OrgMember? Creator { get; set; }
     public ICollection<OrgMember> JoinedMembers { get; set; } = new List<OrgMember>();
 }

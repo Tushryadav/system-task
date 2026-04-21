@@ -42,3 +42,9 @@ logs/
 
 ## Project specific
 appsettings.*.local.json
+
+## Docker secrets (never commit real .env)
+.env
+.env.local
+.env.production
+# .env.example is intentionally tracked (it's a safe template)

@@ -1,8 +1,12 @@
 -- ═══════════════════════════════════════════════════════════════
 --  SRAAS — Supabase Schema Creation Script
 --  Run this directly in Supabase SQL Editor
---  Version: 1.0 | Stack: PostgreSQL (Supabase)
+--  Version: 1.1 | Stack: PostgreSQL (Supabase)
 -- ═══════════════════════════════════════════════════════════════
+
+-- ─── EXTENSIONS ──────────────────────────────────────────────
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ─── ENUMS ───────────────────────────────────────────────────
 
@@ -38,6 +42,19 @@ END $$;
 
 
 -- ═══════════════════════════════════════════════════════════════
+--  COMMON FUNCTION — auto-update updated_at
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ═══════════════════════════════════════════════════════════════
 --  1. ORGANIZATIONS
 -- ═══════════════════════════════════════════════════════════════
 
@@ -51,6 +68,10 @@ CREATE TABLE IF NOT EXISTS organizations (
   created_at   TIMESTAMPTZ DEFAULT now(),
   updated_at   TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE OR REPLACE TRIGGER trg_org_updated
+BEFORE UPDATE ON organizations
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
 -- ═══════════════════════════════════════════════════════════════
@@ -67,9 +88,11 @@ CREATE TABLE IF NOT EXISTS apps (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_apps_org_id ON apps(org_id);
+
 
 -- ═══════════════════════════════════════════════════════════════
---  3. ORG INVITES (must come before org_members for FK)
+--  3. ORG INVITES (before org_members for FK ordering)
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS org_invites (
@@ -84,6 +107,11 @@ CREATE TABLE IF NOT EXISTS org_invites (
   is_active   BOOLEAN DEFAULT true,
   created_at  TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_invites_org_id ON org_invites(org_id);
+CREATE INDEX IF NOT EXISTS idx_invites_code
+  ON org_invites(invite_code)
+  WHERE is_active = true;
 
 
 -- ═══════════════════════════════════════════════════════════════
@@ -105,6 +133,17 @@ CREATE TABLE IF NOT EXISTS org_members (
 
   UNIQUE(org_id, email)
 );
+
+-- Case-insensitive email lookup
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_email_lower
+  ON org_members(org_id, LOWER(email));
+
+-- Active member filter (RLS / listing)
+CREATE INDEX IF NOT EXISTS idx_org_members_org_active
+  ON org_members(org_id, is_active);
+
+-- FK support
+CREATE INDEX IF NOT EXISTS idx_org_members_org_id ON org_members(org_id);
 
 -- Now add the FK from org_invites.created_by → org_members.id
 ALTER TABLE org_invites
@@ -128,6 +167,13 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   last_used_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash
+  ON refresh_tokens(token_hash)
+  WHERE is_revoked = false;
+
+CREATE INDEX IF NOT EXISTS idx_refresh_member
+  ON refresh_tokens(member_id);
+
 
 -- ═══════════════════════════════════════════════════════════════
 --  6. CHANNELS
@@ -144,6 +190,9 @@ CREATE TABLE IF NOT EXISTS channels (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_channels_app ON channels(app_id);
+CREATE INDEX IF NOT EXISTS idx_channels_org ON channels(org_id);
+
 
 -- ═══════════════════════════════════════════════════════════════
 --  7. CHANNEL MEMBERS
@@ -158,6 +207,9 @@ CREATE TABLE IF NOT EXISTS channel_members (
 
   UNIQUE(channel_id, org_member_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_channel_members_member
+  ON channel_members(org_member_id);
 
 
 -- ═══════════════════════════════════════════════════════════════
@@ -176,7 +228,7 @@ CREATE TABLE IF NOT EXISTS app_members (
 
 
 -- ═══════════════════════════════════════════════════════════════
---  9. MESSAGES
+--  9. MESSAGES  (🔥 hot table — indexes are critical)
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -195,6 +247,27 @@ CREATE TABLE IF NOT EXISTS messages (
   updated_at   TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE OR REPLACE TRIGGER trg_msg_updated
+BEFORE UPDATE ON messages
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Latest messages in a channel (most common query)
+CREATE INDEX IF NOT EXISTS idx_messages_channel_created
+  ON messages(channel_id, created_at DESC)
+  WHERE is_deleted = false;
+
+-- Org-level filter (RLS base)
+CREATE INDEX IF NOT EXISTS idx_messages_org
+  ON messages(org_id);
+
+-- Sender lookup
+CREATE INDEX IF NOT EXISTS idx_messages_sender
+  ON messages(sender_id);
+
+-- Thread / reply chain
+CREATE INDEX IF NOT EXISTS idx_messages_reply
+  ON messages(reply_to_id);
+
 
 -- ═══════════════════════════════════════════════════════════════
 --  10. MESSAGE ATTACHMENTS
@@ -211,6 +284,9 @@ CREATE TABLE IF NOT EXISTS message_attachments (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE INDEX IF NOT EXISTS idx_attachment_msg
+  ON message_attachments(message_id);
+
 
 -- ═══════════════════════════════════════════════════════════════
 --  11. MESSAGE REACTIONS
@@ -225,6 +301,9 @@ CREATE TABLE IF NOT EXISTS message_reactions (
 
   UNIQUE(message_id, org_member_id, emoji)
 );
+
+CREATE INDEX IF NOT EXISTS idx_reactions_message
+  ON message_reactions(message_id);
 
 
 -- ═══════════════════════════════════════════════════════════════
@@ -242,47 +321,10 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at  TIMESTAMPTZ DEFAULT now()
 );
 
-
--- ═══════════════════════════════════════════════════════════════
---  INDEXES (Performance)
--- ═══════════════════════════════════════════════════════════════
-
--- Messages: latest messages in a channel (most common query)
-CREATE INDEX IF NOT EXISTS idx_messages_channel_created
-  ON messages(channel_id, created_at DESC)
-  WHERE is_deleted = false;
-
--- Messages: by org (RLS base filter)
-CREATE INDEX IF NOT EXISTS idx_messages_org
-  ON messages(org_id);
-
--- Channels: by app
-CREATE INDEX IF NOT EXISTS idx_channels_app
-  ON channels(app_id);
-
--- Members: by org + active status
-CREATE INDEX IF NOT EXISTS idx_org_members_org_active
-  ON org_members(org_id, is_active);
-
--- Invites: fast lookup by code
-CREATE INDEX IF NOT EXISTS idx_invites_code
-  ON org_invites(invite_code)
-  WHERE is_active = true;
-
--- Refresh tokens: lookup by hash
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash
-  ON refresh_tokens(token_hash)
-  WHERE is_revoked = false;
-
--- Audit logs: org + time (admin dashboard)
 CREATE INDEX IF NOT EXISTS idx_audit_logs_org_created
   ON audit_logs(org_id, created_at DESC);
 
--- Reactions: per message
-CREATE INDEX IF NOT EXISTS idx_reactions_message
-  ON message_reactions(message_id);
-
 
 -- ═══════════════════════════════════════════════════════════════
---  DONE — Schema created successfully
+--  DONE — Schema created successfully (v1.1)
 -- ═══════════════════════════════════════════════════════════════

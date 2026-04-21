@@ -2,6 +2,7 @@ using AspNetCoreRateLimit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Scalar.AspNetCore;
 using SRAAS.Api.Data;
 using SRAAS.Api.Enums;
 using SRAAS.Api.Services;
@@ -10,9 +11,7 @@ using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 
 // ═══════════════════════════════════════════════════
-//  DATABASE — PostgreSQL via Npgsql + EF Core
-//  Connection string comes from User Secrets (dev)
-//  or Environment Variable (production)
+//  DATABASE
 // ═══════════════════════════════════════════════════
 builder.Services.AddDbContext<SraasDbContext>(options =>
 {
@@ -37,48 +36,53 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
+            ValidateIssuer           = true,
+            ValidateAudience         = true,
+            ValidateLifetime         = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(
+            ValidIssuer              = builder.Configuration["Jwt:Issuer"],
+            ValidAudience            = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey         = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!)),
-            ClockSkew = TimeSpan.Zero // No grace period — strict 15 min expiry
+            ClockSkew = TimeSpan.Zero
         };
     });
 
 builder.Services.AddAuthorization();
 
 // ═══════════════════════════════════════════════════
-//  RATE LIMITING — AspNetCoreRateLimit
+//  RATE LIMITING
 // ═══════════════════════════════════════════════════
 builder.Services.AddMemoryCache();
 builder.Services.Configure<IpRateLimitOptions>(options =>
 {
     options.EnableEndpointRateLimiting = true;
-    options.StackBlockedRequests = false;
-    options.GeneralRules = new List<RateLimitRule>
+    options.StackBlockedRequests       = false;
+    options.GeneralRules               = new List<RateLimitRule>
     {
-        new() { Endpoint = "POST:/api/auth/login",    Period = "5m",  Limit = 10 },
-        new() { Endpoint = "POST:/api/invites/join",   Period = "10m", Limit = 5  },
-        new() { Endpoint = "POST:/api/messages",       Period = "1m",  Limit = 60 },
-        new() { Endpoint = "POST:/api/files/upload",   Period = "1m",  Limit = 10 }
+        new() { Endpoint = "POST:/api/auth/login",   Period = "5m",  Limit = 10 },
+        new() { Endpoint = "POST:/api/invites/join", Period = "10m", Limit = 5  },
+        new() { Endpoint = "POST:/api/messages",     Period = "1m",  Limit = 60 },
+        new() { Endpoint = "POST:/api/files/upload", Period = "1m",  Limit = 10 }
     };
 });
 builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
 // ═══════════════════════════════════════════════════
-//  DEPENDENCY INJECTION — Services
+//  SERVICES
 // ═══════════════════════════════════════════════════
 builder.Services.AddScoped<IPasswordService, PasswordService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
 // ═══════════════════════════════════════════════════
-//  CONTROLLERS + JSON OPTIONS
+//  OPENAPI (.NET 10 built-in) + Scalar
+// ═══════════════════════════════════════════════════
+builder.Services.AddOpenApi("v1");
+
+// ═══════════════════════════════════════════════════
+//  CONTROLLERS + JSON
 // ═══════════════════════════════════════════════════
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -98,7 +102,7 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(
                 builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-                ?? new[] { "http://localhost:3000", "http://localhost:5173" })
+                ?? ["http://localhost:3000", "http://localhost:5173"])
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -115,6 +119,23 @@ if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
+
+// OpenAPI JSON always available (needed by Scalar)
+// → /openapi/v1.json
+app.MapOpenApi();
+
+// Scalar API Explorer UI
+// → http://localhost:<port>/scalar/v1
+app.MapScalarApiReference(options =>
+{
+    options.Title             = "SRAAS API Explorer";
+    options.Theme             = ScalarTheme.DeepSpace;
+    options.DefaultHttpClient = new(ScalarTarget.CSharp, ScalarClient.HttpClient);
+    options.ShowSidebar = true;
+    options.HideModels  = false;
+    options.DarkMode    = true;
+    options.AddPreferredSecuritySchemes("Bearer");
+});
 
 app.UseHttpsRedirection();
 app.UseIpRateLimiting();
