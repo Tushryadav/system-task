@@ -1,0 +1,6 @@
+@SRAAS.Api_HostAddress = http://localhost:5195
+
+GET {{SRAAS.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
