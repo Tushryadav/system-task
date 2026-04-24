@@ -2,14 +2,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy csproj first (better layer caching)
+# Copy csproj first (better caching)
 COPY SRAAS.Api.csproj ./
 RUN dotnet restore
 
-# Copy rest of the source
+# Copy remaining source
 COPY . ./
 
-# Publish app
+# Publish app (optimized)
 RUN dotnet publish SRAAS.Api.csproj \
     -c Release \
     -o /app/publish \
@@ -20,18 +20,18 @@ RUN dotnet publish SRAAS.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 
-# Create non-root user (correct way)
+# Create non-root user
 RUN useradd -m -d /home/appuser -s /bin/bash appuser
 
-# Copy published output
+# Copy published app
 COPY --from=build /app/publish .
 
-# Set ownership (important for non-root execution)
+# Fix permissions
 RUN chown -R appuser:appuser /app
 
 USER appuser
 
-# Set port
+# Configure port (Render expects 10000 sometimes, but 8080 is fine unless specified)
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
