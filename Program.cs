@@ -80,6 +80,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 //  OPENAPI (.NET 10 built-in) + Scalar
 // ═══════════════════════════════════════════════════
 builder.Services.AddOpenApi("v1");
+builder.Services.AddHealthChecks();
 
 // ═══════════════════════════════════════════════════
 //  CONTROLLERS + JSON
@@ -142,6 +143,7 @@ app.UseIpRateLimiting();
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();

@@ -20,8 +20,8 @@ USER appuser
 
 COPY --from=build /app/publish .
 
-# ASP.NET Core will read ASPNETCORE_URLS
-ENV ASPNETCORE_URLS=http://+:8080
+# ASP.NET Core will read ASPNETCORE_HTTP_PORTS
+ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
 ENTRYPOINT ["dotnet", "SRAAS.Api.dll"]
