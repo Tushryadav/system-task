@@ -1,15 +1,15 @@
 # ─── Stage 1: Build ───────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
 WORKDIR /src
 
-# Copy csproj first (better caching)
+# Copy csproj first (layer caching)
 COPY SRAAS.Api.csproj ./
 RUN dotnet restore
 
-# Copy remaining source
+# Copy rest of source
 COPY . ./
 
-# Publish app (optimized)
+# Publish app
 RUN dotnet publish SRAAS.Api.csproj \
     -c Release \
     -o /app/publish \
@@ -17,13 +17,13 @@ RUN dotnet publish SRAAS.Api.csproj \
     /p:UseAppHost=false
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview AS final
 WORKDIR /app
 
-# Create non-root user
+# Create non-root user (works on Debian-based images)
 RUN useradd -m -d /home/appuser -s /bin/bash appuser
 
-# Copy published app
+# Copy published output
 COPY --from=build /app/publish .
 
 # Fix permissions
@@ -31,8 +31,8 @@ RUN chown -R appuser:appuser /app
 
 USER appuser
 
-# Configure port (Render expects 10000 sometimes, but 8080 is fine unless specified)
-ENV ASPNETCORE_HTTP_PORTS=8080
+# Render-safe port binding
+ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
 ENTRYPOINT ["dotnet", "SRAAS.Api.dll"]
